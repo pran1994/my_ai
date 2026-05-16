@@ -9,7 +9,11 @@ import {
 } from "./whatsapp.js";
 
 const port = Number(process.env.PORT || 3000);
-const host = process.env.HOST || "127.0.0.1";
+// Render routes public HTTP only to 0.0.0.0. RENDER=true is set on all Render services.
+const onRender = process.env.RENDER === "true";
+const host =
+  process.env.HOST ||
+  (process.env.NODE_ENV === "production" || onRender ? "0.0.0.0" : "127.0.0.1");
 const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
 const ownerWhatsAppId = process.env.OWNER_WHATSAPP_ID;
 const inFlightMessageIds = new Set();
