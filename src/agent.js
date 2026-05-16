@@ -2,6 +2,7 @@ import {
   addMemoryFact,
   autoLearnFacts,
   buildConversationMessages,
+  formatMemoryForChat,
   formatMemoryForPrompt,
   loadMemory,
   rememberConversation,
@@ -33,7 +34,9 @@ async function chatWithMemory(memory, memoryText, userText) {
     history,
   );
   await rememberConversation(userText, reply);
-  await autoLearnFacts(userText, reply);
+  void autoLearnFacts(userText, reply).catch((error) => {
+    console.error("autoLearnFacts (background):", error.message);
+  });
   return reply;
 }
 
@@ -71,13 +74,18 @@ export async function handleAssistantMessage(userText) {
   }
 
   const memory = await loadMemory();
-  const memoryText = formatMemoryForPrompt(memory);
 
   if (isProbablyClockQuestion(trimmed)) {
     const reply = wallClockReplyForUserMessage(trimmed);
     await rememberConversation(trimmed, reply);
     return reply;
   }
+
+  if (lower === "skills" || lower === "help finance") {
+    return `${financeSkillHelp()}\n\n${searchSkillHelp()}`;
+  }
+
+  const memoryText = await formatMemoryForChat(memory, trimmed);
 
   if (
     lower === "finance news" ||
@@ -119,10 +127,6 @@ export async function handleAssistantMessage(userText) {
     const reply = await summarizeWebSearch(memoryText, query);
     await rememberConversation(trimmed, reply);
     return reply;
-  }
-
-  if (lower === "skills" || lower === "help finance") {
-    return `${financeSkillHelp()}\n\n${searchSkillHelp()}`;
   }
 
   if (autoWebSearchEnabled() && messageShouldUseWebSearch(trimmed)) {

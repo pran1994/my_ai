@@ -1,13 +1,15 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { createLLMResponse } from "./llm.js";
+import { createLLMResponse, createOllamaEmbedding, isOllamaEmbeddingEnabled } from "./llm.js";
 import { isProbablyClockQuestion } from "./search-intent.js";
 
 const memoryPath = resolve(process.env.MEMORY_FILE || "./data/memory.json");
 const conversationLimit = Number(process.env.CONVERSATION_HISTORY_LIMIT || 10);
 const maxHistoryChars = Number(process.env.CONVERSATION_MAX_CHARS || 600);
 const autoLearnEnabled = process.env.AUTO_LEARN_FACTS !== "false";
+const memoryRetrievalTopK = Number(process.env.MEMORY_RETRIEVAL_TOP_K || 12);
+const memoryRetrievalMinFacts = Number(process.env.MEMORY_RETRIEVAL_MIN_FACTS || 8);
 
 async function ensureMemoryFile() {
   await mkdir(dirname(memoryPath), { recursive: true });
@@ -56,6 +58,15 @@ export async function addMemoryFact(text, source = "manual") {
     createdAt: new Date().toISOString(),
   };
 
+  if (isOllamaEmbeddingEnabled() && fact.text) {
+    try {
+      fact.embedding = await createOllamaEmbedding(fact.text);
+      fact.embeddedWithModel = process.env.OLLAMA_EMBED_MODEL.trim();
+    } catch (error) {
+      console.error("addMemoryFact embedding:", error.message);
+    }
+  }
+
   memory.facts.unshift(fact);
   await saveMemory(memory);
   return fact;
@@ -90,6 +101,110 @@ export function formatMemoryForPrompt(memory) {
     .slice(0, 50)
     .map((fact) => `- (${fact.id}) ${fact.text}`)
     .join("\n");
+}
+
+function cosineSimilarity(a, b) {
+  if (!a?.length || !b?.length || a.length !== b.length) {
+    return -1;
+  }
+
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  if (denom === 0) {
+    return 0;
+  }
+
+  return dot / denom;
+}
+
+function factNeedsEmbedding(fact) {
+  if (!isOllamaEmbeddingEnabled()) {
+    return false;
+  }
+
+  const model = process.env.OLLAMA_EMBED_MODEL.trim();
+  if (!Array.isArray(fact.embedding) || fact.embedding.length === 0) {
+    return true;
+  }
+
+  return fact.embeddedWithModel !== model;
+}
+
+async function ensureFactEmbeddings(memory) {
+  if (!isOllamaEmbeddingEnabled()) {
+    return;
+  }
+
+  const model = process.env.OLLAMA_EMBED_MODEL.trim();
+  const needs = memory.facts.filter(factNeedsEmbedding);
+  if (needs.length === 0) {
+    return;
+  }
+
+  for (const fact of needs) {
+    try {
+      fact.embedding = await createOllamaEmbedding(fact.text);
+      fact.embeddedWithModel = model;
+    } catch (error) {
+      console.error(`Embedding fact ${fact.id}:`, error.message);
+      delete fact.embedding;
+      delete fact.embeddedWithModel;
+    }
+  }
+
+  await saveMemory(memory);
+}
+
+/**
+ * Memory block for LLM prompts — uses cosine similarity when OLLAMA_EMBED_MODEL is set
+ * and there are more than MEMORY_RETRIEVAL_MIN_FACTS stored facts.
+ */
+export async function formatMemoryForChat(memory, userQuery) {
+  if (!memory.facts.length) {
+    return "No durable personal memory has been stored yet.";
+  }
+
+  if (!isOllamaEmbeddingEnabled()) {
+    return formatMemoryForPrompt(memory);
+  }
+
+  await ensureFactEmbeddings(memory);
+
+  if (memory.facts.length <= memoryRetrievalMinFacts) {
+    return formatMemoryForPrompt(memory);
+  }
+
+  let queryVec;
+  try {
+    queryVec = await createOllamaEmbedding(userQuery);
+  } catch (error) {
+    console.error("Query embedding failed:", error.message);
+    return formatMemoryForPrompt(memory);
+  }
+
+  const scored = memory.facts
+    .map((fact) => ({
+      fact,
+      score:
+        Array.isArray(fact.embedding) && fact.embedding.length > 0
+          ? cosineSimilarity(queryVec, fact.embedding)
+          : -1,
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const top = scored.slice(0, memoryRetrievalTopK).map((s) => s.fact);
+  const header =
+    `(Retrieved ${top.length} facts most relevant to this message; you have ${memory.facts.length} total.)`;
+  const lines = top.map((fact) => `- (${fact.id}) ${fact.text}`).join("\n");
+  return `${header}\n${lines}`;
 }
 
 export function buildConversationMessages(memory, limit = conversationLimit) {
