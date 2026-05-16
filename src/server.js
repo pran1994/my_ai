@@ -14,7 +14,7 @@ const onRender = process.env.RENDER === "true";
 const host =
   process.env.HOST ||
   (process.env.NODE_ENV === "production" || onRender ? "0.0.0.0" : "127.0.0.1");
-const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN?.trim();
 const ownerWhatsAppId = process.env.OWNER_WHATSAPP_ID;
 const inFlightMessageIds = new Set();
 
@@ -36,15 +36,27 @@ function sendJson(response, statusCode, payload) {
 async function handleWebhookVerification(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
   const mode = url.searchParams.get("hub.mode");
-  const token = url.searchParams.get("hub.verify_token");
+  const token = url.searchParams.get("hub.verify_token")?.trim();
   const challenge = url.searchParams.get("hub.challenge");
 
-  if (mode === "subscribe" && token && token === verifyToken) {
+  if (mode === "subscribe" && token && verifyToken && token === verifyToken) {
     response.writeHead(200, { "Content-Type": "text/plain" });
     response.end(challenge || "");
     return;
   }
 
+  console.warn(
+    JSON.stringify({
+      event: "webhook_verify_failed",
+      reason: !verifyToken
+        ? "WHATSAPP_VERIFY_TOKEN is not set on the server"
+        : mode !== "subscribe"
+          ? "hub.mode is not subscribe"
+          : !token
+            ? "hub.verify_token missing in query"
+            : "hub.verify_token does not match WHATSAPP_VERIFY_TOKEN",
+    }),
+  );
   response.writeHead(403, { "Content-Type": "text/plain" });
   response.end("Forbidden");
 }
@@ -132,21 +144,30 @@ async function handleIncomingWebhook(request, response) {
   }
 }
 
+function webhookPathname(url) {
+  let path = url.pathname;
+  if (path.length > 1 && path.endsWith("/")) {
+    path = path.slice(0, -1);
+  }
+  return path;
+}
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    const path = webhookPathname(url);
 
-    if (request.method === "GET" && url.pathname === "/health") {
+    if (request.method === "GET" && path === "/health") {
       sendJson(response, 200, { ok: true });
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/webhook") {
+    if (request.method === "GET" && path === "/webhook") {
       await handleWebhookVerification(request, response);
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/webhook") {
+    if (request.method === "POST" && path === "/webhook") {
       await handleIncomingWebhook(request, response);
       return;
     }
