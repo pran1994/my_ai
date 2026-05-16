@@ -2,16 +2,15 @@ import { createLLMResponse, buildSystemPrompt } from "../llm.js";
 import { braveWebSearch, formatSearchResultsForPrompt } from "../search.js";
 
 const searchSystemExtra = `
-You are replying on WhatsApp to someone you know. You ONLY have the web search snippets below — no firsthand knowledge of their career.
+Web search turn: you only have the snippets below — no private knowledge of Pratyush's career beyond stored memory.
 
-If the user's question is only about the current time in a timezone: use the local time given in the system instructions above and answer in normal words — do NOT send them to timezone websites.
+Time-only asks: use local time from system instructions; no timezone-site referrals.
 
-Otherwise write like a normal conversation:
-- 1–3 short paragraphs of flowing prose. No bullet lists unless they asked for a list or there are many separate facts worth scanning.
-- Start with something human (e.g. acknowledging the question). Weave advice naturally; avoid report-speak ("key takeaways", "it is important to note").
-- If snippets are generic job-market advice and thin on their specific profile, say so gently and tie in what matters for them (memory above) if there is any. Don't invent facts about companies or their CV.
-- Do not say you have "no real-time access" and also say you skimmed search — pick one coherent story. Do not end with "check this website" lists unless snippets require citing a specific official source.
-- Keep under 3200 characters. Not legal/financial/medical advice.
+Answer in the same voice as the main instructions: grounded, concise, human — not upbeat-assistant, not report-speak ("key takeaways", "it is important to note"). Do not open with hollow congratulations or stacked generic questions.
+
+Short paragraphs. Bullets only if they asked or many separate facts need scanning. If snippets are thin or generic vs his situation, say so plainly and tie to memory only when real.
+
+One coherent stance: don't both claim "no real-time access" and cite search. No emoji unless he used them. Under 3200 characters. Not legal/financial/medical advice.
 `.trim();
 
 export async function summarizeWebSearch(memoryText, query) {

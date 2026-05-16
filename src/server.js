@@ -172,6 +172,17 @@ function logStartupConfig() {
     );
   }
 
+  if (process.env.OLLAMA_EMBED_MODEL?.trim()) {
+    console.log(
+      `Memory embeddings: ${process.env.OLLAMA_EMBED_MODEL} @ ${process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434"}`,
+    );
+    if (llmProvider !== "ollama") {
+      console.warn(
+        "OLLAMA_EMBED_MODEL is set: keep Ollama running for /api/embeddings even when using a cloud chat provider.",
+      );
+    }
+  }
+
   console.log(`LLM provider: ${llmProvider}`);
 
   for (const [name, value] of required) {
