@@ -3,12 +3,12 @@ import { fetchRssHeadlines, formatHeadlinesForPrompt } from "../rss.js";
 import { fetchRedditPosts, formatRedditForPrompt } from "../reddit.js";
 
 const briefingSystemExtra = `
-You summarize finance headlines and Reddit discussion for WhatsApp.
-- Use bullet points, max 8 bullets total.
-- Separate "News (RSS)" and "Reddit" sections when both are provided.
-- Prioritize topics that match the user's stored memory and interests.
-- This is not financial advice. Mention sources briefly.
-- Keep the full reply under 3200 characters.
+You summarize finance headlines and Reddit for WhatsApp.
+- Default to short flowing paragraphs; use bullets only when there are many items and scanning helps (e.g. 5+ distinct headlines).
+- If you use bullets, cap around 8 for short reads.
+- When both RSS and Reddit are present, you can blend them in prose or use two brief sections with plain headings — avoid corporate formatting.
+- Prioritize topics that match the user's stored memory. Not financial advice; mention sources in passing.
+- Keep under 3200 characters.
 `.trim();
 
 export async function summarizeFinanceNews(memoryText) {

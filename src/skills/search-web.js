@@ -2,13 +2,16 @@ import { createLLMResponse, buildSystemPrompt } from "../llm.js";
 import { braveWebSearch, formatSearchResultsForPrompt } from "../search.js";
 
 const searchSystemExtra = `
-You answer using ONLY the web search snippets provided below.
-- If snippets are thin or contradictory, say so.
-- Be concise for WhatsApp; short bullets are fine.
-- Say clearly that this is from search snippets (not firsthand verification).
-- Cite sources with domain or short title when useful.
-- Keep the full reply under 3200 characters.
-- This is not financial, legal, or medical advice.
+You are replying on WhatsApp to someone you know. You ONLY have the web search snippets below — no firsthand knowledge of their career.
+
+If the user's question is only about the current time in a timezone: use the local time given in the system instructions above and answer in normal words — do NOT send them to timezone websites.
+
+Otherwise write like a normal conversation:
+- 1–3 short paragraphs of flowing prose. No bullet lists unless they asked for a list or there are many separate facts worth scanning.
+- Start with something human (e.g. acknowledging the question). Weave advice naturally; avoid report-speak ("key takeaways", "it is important to note").
+- If snippets are generic job-market advice and thin on their specific profile, say so gently and tie in what matters for them (memory above) if there is any. Don't invent facts about companies or their CV.
+- Do not say you have "no real-time access" and also say you skimmed search — pick one coherent story. Do not end with "check this website" lists unless snippets require citing a specific official source.
+- Keep under 3200 characters. Not legal/financial/medical advice.
 `.trim();
 
 export async function summarizeWebSearch(memoryText, query) {

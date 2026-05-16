@@ -2,12 +2,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createLLMResponse } from "./llm.js";
+import { isProbablyClockQuestion } from "./search-intent.js";
 
 const memoryPath = resolve(process.env.MEMORY_FILE || "./data/memory.json");
 const conversationLimit = Number(process.env.CONVERSATION_HISTORY_LIMIT || 10);
 const maxHistoryChars = Number(process.env.CONVERSATION_MAX_CHARS || 600);
 const autoLearnEnabled = process.env.AUTO_LEARN_FACTS !== "false";
-const autoLearnNotify = process.env.AUTO_LEARN_NOTIFY === "true";
 
 async function ensureMemoryFile() {
   await mkdir(dirname(memoryPath), { recursive: true });
@@ -154,6 +154,10 @@ export async function autoLearnFacts(userText, assistantText) {
     return [];
   }
 
+  if (isProbablyClockQuestion(userText.trim())) {
+    return [];
+  }
+
   const memory = await loadMemory();
   const existing = memory.facts.map((fact) => fact.text).join("\n") || "(none)";
 
@@ -163,6 +167,7 @@ Rules:
 - Return ONLY a JSON array of strings (example: ["User prefers concise replies"])
 - Max 3 items; return [] if nothing worth keeping
 - Save stable preferences, identity, goals, interests — not one-off questions or small talk
+- Return [] for pure time/timezone questions, corrections, or meta lines like "time was corrected" — those are not memory
 - Do not duplicate existing facts
 - No markdown, no explanation
 `.trim();
@@ -185,7 +190,6 @@ New facts JSON array:`;
   }
 
   const candidates = parseFactsJson(raw);
-  const learned = [];
 
   for (const text of candidates) {
     if (isDuplicateFact(text, memory.facts)) {
@@ -193,9 +197,6 @@ New facts JSON array:`;
     }
 
     await addMemoryFact(text, "auto");
-    learned.push(text);
     console.log(`Auto-learned fact: ${text}`);
   }
-
-  return autoLearnNotify ? learned : [];
 }
