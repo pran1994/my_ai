@@ -93,6 +93,23 @@ function isProbablyChitChat(trimmed) {
   return false;
 }
 
+/** Wall clock is answered on the server (see wallClockReplyForUserMessage) */
+export function isProbablyClockQuestion(trimmed) {
+  const t = trimmed.toLowerCase();
+  return (
+    /\bwhat\s+time\s+is\s+it\b/.test(t) ||
+    /\bwhat('?s| is)\s+(the\s+)?time\b/.test(t) ||
+    /\bcurrent\s+time\b/.test(t) ||
+    /\btime\s+in\s+/.test(t) ||
+    /\bwhat\s+hour\b/.test(t) ||
+    /\btell\s+me\s+(the\s+)?time\b/.test(t) ||
+    /\bdo\s+you\s+know\s+(what\s+)?the\s+time\b/.test(t) ||
+    /\bgot\s+(the\s+)?time\b/.test(t) ||
+    /^time\s*\?/i.test(trimmed) ||
+    /\b(have|know)\s+(you\s+got\s+)?the\s+time\b/.test(t)
+  );
+}
+
 export function braveSearchConfigured() {
   return Boolean(process.env.BRAVE_API_KEY?.trim());
 }
@@ -113,6 +130,10 @@ export function messageShouldUseWebSearch(text) {
 
   const trimmed = text.trim();
   if (trimmed.length < 12 || isProbablyChitChat(trimmed)) {
+    return false;
+  }
+
+  if (isProbablyClockQuestion(trimmed)) {
     return false;
   }
 

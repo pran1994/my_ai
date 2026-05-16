@@ -7,7 +7,11 @@ import {
   rememberConversation,
   removeMemoryFact,
 } from "./memory.js";
-import { createLLMResponse, buildSystemPrompt } from "./llm.js";
+import {
+  buildSystemPrompt,
+  createLLMResponse,
+  wallClockReplyForUserMessage,
+} from "./llm.js";
 import {
   summarizeFinanceNews,
   summarizeRedditFinance,
@@ -17,6 +21,7 @@ import {
 import { summarizeWebSearch, searchSkillHelp } from "./skills/search-web.js";
 import {
   autoWebSearchEnabled,
+  isProbablyClockQuestion,
   messageShouldUseWebSearch,
 } from "./search-intent.js";
 
@@ -28,12 +33,7 @@ async function chatWithMemory(memory, memoryText, userText) {
     history,
   );
   await rememberConversation(userText, reply);
-
-  const learned = await autoLearnFacts(userText, reply);
-  if (learned.length) {
-    return `${reply}\n\n(Remembered: ${learned.join("; ")})`;
-  }
-
+  await autoLearnFacts(userText, reply);
   return reply;
 }
 
@@ -72,6 +72,12 @@ export async function handleAssistantMessage(userText) {
 
   const memory = await loadMemory();
   const memoryText = formatMemoryForPrompt(memory);
+
+  if (isProbablyClockQuestion(trimmed)) {
+    const reply = wallClockReplyForUserMessage(trimmed);
+    await rememberConversation(trimmed, reply);
+    return reply;
+  }
 
   if (
     lower === "finance news" ||
