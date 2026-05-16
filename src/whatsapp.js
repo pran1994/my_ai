@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+const accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
+const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
 const graphVersion = process.env.WHATSAPP_GRAPH_API_VERSION || "v24.0";
 const appSecret = process.env.META_APP_SECRET;
 
