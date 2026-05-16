@@ -1,0 +1,16 @@
+# Render Blueprint: Node + Ollama in one image (see Dockerfile.render-ollama).
+# Use an instance with enough RAM (4 GB+ recommended for llama3.2).
+# In the dashboard add a persistent disk and set, e.g.:
+#   OLLAMA_MODELS=/data/ollama
+#   MEMORY_FILE=/data/memory.json
+#   DEDUP_FILE=/data/dedup-processed.json
+# First deploy (pulls weights — slow):
+#   OLLAMA_PULL_MODELS=llama3.2,nomic-embed-text
+# Later you can remove OLLAMA_PULL_MODELS if models already on the disk.
+services:
+  - type: web
+    name: personal-whatsapp-assistant
+    runtime: docker
+    dockerfilePath: ./Dockerfile.render-ollama
+    dockerContext: .
+    healthCheckPath: /health

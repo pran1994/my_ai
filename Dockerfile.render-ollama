@@ -1,0 +1,28 @@
+# Render + Ollama: one container, Debian (Ollama’s Linux install expects glibc).
+# Needs enough RAM for your models (e.g. llama3.2 ≈ 2GB+ VRAM/RAM budget — use ≥ Standard on Render or the instance fails OOM).
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && curl -fsSL https://ollama.com/install.sh | sh \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package.json ./
+RUN npm install --omit=dev
+
+COPY . .
+
+RUN chmod +x scripts/docker-entrypoint-ollama.sh
+
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=3000
+ENV OLLAMA_HOST=127.0.0.1:11434
+ENV OLLAMA_BASE_URL=http://127.0.0.1:11434
+# First boot: set OLLAMA_PULL_MODELS=llama3.2,nomic-embed-text on Render (comma-separated)
+
+EXPOSE 3000
+
+ENTRYPOINT ["/app/scripts/docker-entrypoint-ollama.sh"]
