@@ -39,9 +39,23 @@ async function handleWebhookVerification(request, response) {
   const token = url.searchParams.get("hub.verify_token")?.trim();
   const challenge = url.searchParams.get("hub.challenge");
 
-  if (mode === "subscribe" && token && verifyToken && token === verifyToken) {
+  const ok =
+    mode === "subscribe" && token && verifyToken && token === verifyToken;
+
+  console.log(
+    JSON.stringify({
+      event: "webhook_verify_attempt",
+      ok,
+      hub_mode: mode ?? null,
+      has_hub_verify_token: Boolean(token),
+      has_hub_challenge: Boolean(challenge),
+      server_has_verify_token: Boolean(verifyToken),
+    }),
+  );
+
+  if (ok) {
     response.writeHead(200, { "Content-Type": "text/plain" });
-    response.end(challenge || "");
+    response.end(challenge ?? "");
     return;
   }
 
