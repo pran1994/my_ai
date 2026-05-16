@@ -36,11 +36,11 @@ function sendJson(response, statusCode, payload) {
 async function handleWebhookVerification(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
   const mode = url.searchParams.get("hub.mode");
+  const modeOk = (mode ?? "").toLowerCase() === "subscribe";
   const token = url.searchParams.get("hub.verify_token")?.trim();
   const challenge = url.searchParams.get("hub.challenge");
 
-  const ok =
-    mode === "subscribe" && token && verifyToken && token === verifyToken;
+  const ok = modeOk && token && verifyToken && token === verifyToken;
 
   console.log(
     JSON.stringify({
@@ -50,8 +50,23 @@ async function handleWebhookVerification(request, response) {
       has_hub_verify_token: Boolean(token),
       has_hub_challenge: Boolean(challenge),
       server_has_verify_token: Boolean(verifyToken),
+      ua: request.headers["user-agent"] ?? null,
     }),
   );
+
+  if (process.env.WEBHOOK_DEBUG === "1" && !ok) {
+    console.log(
+      JSON.stringify({
+        event: "webhook_verify_debug",
+        server_token_len: verifyToken?.length ?? 0,
+        query_token_len: token?.length ?? 0,
+        first_codepoint_match:
+          verifyToken && token
+            ? verifyToken.codePointAt(0) === token.codePointAt(0)
+            : null,
+      }),
+    );
+  }
 
   if (ok) {
     response.writeHead(200, { "Content-Type": "text/plain" });
@@ -64,7 +79,7 @@ async function handleWebhookVerification(request, response) {
       event: "webhook_verify_failed",
       reason: !verifyToken
         ? "WHATSAPP_VERIFY_TOKEN is not set on the server"
-        : mode !== "subscribe"
+        : !modeOk
           ? "hub.mode is not subscribe"
           : !token
             ? "hub.verify_token missing in query"

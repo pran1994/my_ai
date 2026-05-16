@@ -59,8 +59,8 @@ async function checkOllama() {
 }
 
 async function checkWhatsAppToken() {
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
   const graphVersion = process.env.WHATSAPP_GRAPH_API_VERSION || "v24.0";
 
   if (!accessToken || !phoneNumberId || placeholders.has(accessToken)) {
@@ -76,9 +76,19 @@ async function checkWhatsAppToken() {
 
   if (!response.ok) {
     const body = await response.text();
+    let hint = "";
+    try {
+      const err = JSON.parse(body)?.error;
+      if (err?.code === 190) {
+        hint =
+          " → Meta says this access token is expired or invalid. Generate a NEW token (WhatsApp → API setup, or Business settings → System users) and replace WHATSAPP_ACCESS_TOKEN in .env and on Render.";
+      }
+    } catch {
+      /* ignore */
+    }
     return {
       ok: false,
-      detail: `Graph API ${response.status}: ${body.slice(0, 300)}`,
+      detail: `Graph API ${response.status}: ${body.slice(0, 300)}${hint}`,
     };
   }
 
