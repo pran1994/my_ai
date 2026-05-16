@@ -1,0 +1,207 @@
+import { createServer } from "node:http";
+import { URL } from "node:url";
+import { handleAssistantMessage } from "./agent.js";
+import { hasProcessedMessage, markMessageProcessed } from "./dedup.js";
+import {
+  extractIncomingMessages,
+  sendWhatsAppText,
+  verifyMetaSignature,
+} from "./whatsapp.js";
+
+const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || "127.0.0.1";
+const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
+const ownerWhatsAppId = process.env.OWNER_WHATSAPP_ID;
+const inFlightMessageIds = new Set();
+
+function readRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => resolve(Buffer.concat(chunks)));
+    request.on("error", reject);
+  });
+}
+
+function sendJson(response, statusCode, payload) {
+  response.writeHead(statusCode, { "Content-Type": "application/json" });
+  response.end(JSON.stringify(payload));
+}
+
+async function handleWebhookVerification(request, response) {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const mode = url.searchParams.get("hub.mode");
+  const token = url.searchParams.get("hub.verify_token");
+  const challenge = url.searchParams.get("hub.challenge");
+
+  if (mode === "subscribe" && token && token === verifyToken) {
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end(challenge || "");
+    return;
+  }
+
+  response.writeHead(403, { "Content-Type": "text/plain" });
+  response.end("Forbidden");
+}
+
+async function handleIncomingWebhook(request, response) {
+  const rawBody = await readRequestBody(request);
+  const signature = request.headers["x-hub-signature-256"];
+
+  if (!verifyMetaSignature(rawBody, signature)) {
+    response.writeHead(401, { "Content-Type": "text/plain" });
+    response.end("Invalid signature");
+    return;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(rawBody.toString("utf8"));
+  } catch (error) {
+    console.error("Webhook body was not valid JSON", error);
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end("EVENT_RECEIVED");
+    return;
+  }
+
+  const messages = extractIncomingMessages(payload);
+
+  if (messages.length === 0) {
+    console.log(
+      JSON.stringify({
+        event: "webhook_received",
+        object: payload.object,
+        note: "no text messages in payload (status update or unsubscribed field?)",
+      }),
+    );
+  }
+
+  response.writeHead(200, { "Content-Type": "text/plain" });
+  response.end("EVENT_RECEIVED");
+
+  for (const message of messages) {
+    if (!message.text.trim()) {
+      continue;
+    }
+
+    if (
+      inFlightMessageIds.has(message.id) ||
+      (await hasProcessedMessage(message.id))
+    ) {
+      console.log(`Skipping duplicate webhook for message ${message.id}`);
+      continue;
+    }
+
+    inFlightMessageIds.add(message.id);
+    console.log(
+      JSON.stringify({
+        event: "incoming_message",
+        from: message.from,
+        text: message.text,
+      }),
+    );
+
+    if (ownerWhatsAppId && message.from !== ownerWhatsAppId) {
+      console.warn(`Ignoring message from non-owner sender: ${message.from}`);
+      continue;
+    }
+
+    try {
+      const reply = await handleAssistantMessage(message.text);
+      await sendWhatsAppText(message.from, reply);
+      await markMessageProcessed(message.id);
+    } catch (error) {
+      console.error(error);
+      try {
+        await sendWhatsAppText(
+          message.from,
+          "I hit an internal error while responding.",
+        );
+        await markMessageProcessed(message.id);
+      } catch (sendError) {
+        console.error(sendError);
+      }
+    } finally {
+      inFlightMessageIds.delete(message.id);
+    }
+  }
+}
+
+const server = createServer(async (request, response) => {
+  try {
+    const url = new URL(request.url, `http://${request.headers.host}`);
+
+    if (request.method === "GET" && url.pathname === "/health") {
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/webhook") {
+      await handleWebhookVerification(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/webhook") {
+      await handleIncomingWebhook(request, response);
+      return;
+    }
+
+    sendJson(response, 404, { error: "Not found" });
+  } catch (error) {
+    console.error(error);
+    sendJson(response, 500, { error: "Internal server error" });
+  }
+});
+
+function logStartupConfig() {
+  const llmProvider = (process.env.LLM_PROVIDER || "openai").toLowerCase();
+  const required = [
+    ["WHATSAPP_VERIFY_TOKEN", verifyToken],
+    ["WHATSAPP_ACCESS_TOKEN", process.env.WHATSAPP_ACCESS_TOKEN],
+    ["WHATSAPP_PHONE_NUMBER_ID", process.env.WHATSAPP_PHONE_NUMBER_ID],
+  ];
+
+  if (llmProvider === "anthropic") {
+    required.push(["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY]);
+  } else if (llmProvider === "openai") {
+    required.push(["OPENAI_API_KEY", process.env.OPENAI_API_KEY]);
+  } else if (llmProvider === "ollama") {
+    console.log(
+      `Ollama: ${process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434"} model ${process.env.OLLAMA_MODEL || "llama3.2"}`,
+    );
+  }
+
+  console.log(`LLM provider: ${llmProvider}`);
+
+  for (const [name, value] of required) {
+    if (!value) {
+      console.warn(`${name} is not set.`);
+    }
+  }
+
+  if (llmProvider === "ollama") {
+    console.warn(
+      "Ensure Ollama is running (ollama serve or the Ollama app) before sending WhatsApp messages.",
+    );
+  }
+
+  if (!process.env.META_APP_SECRET) {
+    console.warn(
+      "META_APP_SECRET is not set; webhook signature verification is disabled.",
+    );
+  }
+
+  if (!ownerWhatsAppId) {
+    console.warn(
+      "OWNER_WHATSAPP_ID is not set; all senders can use the assistant until you lock it down.",
+    );
+  }
+}
+
+logStartupConfig();
+
+server.listen(port, host, () => {
+  console.log(`WhatsApp assistant listening on http://${host}:${port}`);
+  console.log(`Webhook URL path: /webhook`);
+});
