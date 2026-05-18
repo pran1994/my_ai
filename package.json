@@ -7,8 +7,8 @@
     "start": "node src/server.js",
     "start:local": "node --env-file=.env src/server.js",
     "dev": "node --watch --env-file=.env src/server.js",
-    "check": "node --check src/server.js && node --check src/agent.js && node --check src/llm.js && node --check src/rss.js && node --check src/reddit.js && node --check src/search.js && node --check src/search-intent.js && node --check src/skills/finance-briefing.js && node --check src/skills/search-web.js && node --check src/memory.js && node --check src/whatsapp.js && node --check src/dedup.js && node --check scripts/load-env.js && node --check scripts/verify-setup.js && node --check scripts/smoke-local.js",
-    "verify": "node --env-file=.env scripts/verify-setup.js",
+    "check": "node --check src/server.js && node --check src/agent.js && node --check src/llm.js && node --check src/rss.js && node --check src/reddit.js && node --check src/search.js && node --check src/search-intent.js && node --check src/skills/finance-briefing.js && node --check src/skills/search-web.js && node --check src/memory.js && node --check src/whatsapp.js && node --check src/twilio.js && node --check src/dedup.js && node --check scripts/load-env.js && node --check scripts/verify-setup.js && node --check scripts/smoke-local.js",
+    "verify": "node scripts/verify-setup.js",
     "smoke": "node --env-file=.env scripts/smoke-local.js"
   },
   "engines": {

@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-export async function loadEnvFile(envPath = resolve(".env")) {
+export async function loadEnvFile(envPath = resolve(".env"), options = {}) {
+  const { override = false } = options;
   let raw;
 
   try {
@@ -36,7 +37,7 @@ export async function loadEnvFile(envPath = resolve(".env")) {
       value = value.slice(1, -1);
     }
 
-    if (!(key in process.env)) {
+    if (override || !(key in process.env)) {
       process.env[key] = value;
     }
   }
