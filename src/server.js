@@ -7,6 +7,14 @@ import {
   sendWhatsAppText,
   verifyMetaSignature,
 } from "./whatsapp.js";
+import {
+  canonicalTwilioAddress,
+  parseTwilioForm,
+  sendTwilioSms,
+  twilioConfigured,
+  twilioWebhookUrl,
+  verifyTwilioWebhookRequest,
+} from "./twilio.js";
 
 const port = Number(process.env.PORT || 3000);
 // Render routes public HTTP only to 0.0.0.0. RENDER=true is set on all Render services.
@@ -16,6 +24,7 @@ const host =
   (process.env.NODE_ENV === "production" || onRender ? "0.0.0.0" : "127.0.0.1");
 const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN?.trim();
 const ownerWhatsAppId = process.env.OWNER_WHATSAPP_ID;
+const ownerSms = process.env.OWNER_SMS?.trim();
 const inFlightMessageIds = new Set();
 
 function readRequestBody(request) {
@@ -173,6 +182,93 @@ async function handleIncomingWebhook(request, response) {
   }
 }
 
+async function handleTwilioSmsWebhook(request, response) {
+  if (!twilioConfigured()) {
+    sendJson(response, 404, { error: "Twilio is not configured" });
+    return;
+  }
+
+  const rawBody = await readRequestBody(request);
+  const bodyText = rawBody.toString("utf8");
+  const params = parseTwilioForm(bodyText);
+  const smsPath = "/sms";
+  const fullUrl = twilioWebhookUrl(request, smsPath);
+  const signature = request.headers["x-twilio-signature"];
+
+  if (!verifyTwilioWebhookRequest(fullUrl, params, signature)) {
+    console.warn(
+      JSON.stringify({
+        event: "twilio_webhook_verify_failed",
+        hint: "URL must match Messaging webhook in Twilio (set PUBLIC_BASE_URL if behind a proxy).",
+      }),
+    );
+    response.writeHead(403, { "Content-Type": "text/plain" });
+    response.end("Forbidden");
+    return;
+  }
+
+  const from = params.From?.trim();
+  const text = params.Body?.trim() || "";
+  const messageId = params.MessageSid || "";
+
+  if (!from || !text || !messageId) {
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end("");
+    return;
+  }
+
+  response.writeHead(200, { "Content-Type": "text/plain" });
+  response.end("");
+
+  const dedupId = `twilio:${messageId}`;
+
+  if (
+    inFlightMessageIds.has(dedupId) ||
+    (await hasProcessedMessage(dedupId))
+  ) {
+    return;
+  }
+
+  inFlightMessageIds.add(dedupId);
+
+  console.log(
+    JSON.stringify({
+      event: "incoming_twilio",
+      channel: from.toLowerCase().startsWith("whatsapp:") ? "whatsapp" : "sms",
+      from,
+      textLength: text.length,
+    }),
+  );
+
+  if (
+    ownerSms &&
+    canonicalTwilioAddress(from) !== canonicalTwilioAddress(ownerSms)
+  ) {
+    console.warn(`Ignoring Twilio message from non-owner sender: ${from}`);
+    inFlightMessageIds.delete(dedupId);
+    return;
+  }
+
+  try {
+    const reply = await handleAssistantMessage(text);
+    await sendTwilioSms(from, reply);
+    await markMessageProcessed(dedupId);
+  } catch (error) {
+    console.error(error);
+    try {
+      await sendTwilioSms(
+        from,
+        "I hit an internal error while responding.",
+      );
+      await markMessageProcessed(dedupId);
+    } catch (sendError) {
+      console.error(sendError);
+    }
+  } finally {
+    inFlightMessageIds.delete(dedupId);
+  }
+}
+
 function webhookPathname(url) {
   let path = url.pathname;
   if (path.length > 1 && path.endsWith("/")) {
@@ -198,6 +294,11 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && path === "/webhook") {
       await handleIncomingWebhook(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && path === "/sms") {
+      await handleTwilioSmsWebhook(request, response);
       return;
     }
 
@@ -262,6 +363,36 @@ function logStartupConfig() {
       "OWNER_WHATSAPP_ID is not set; all senders can use the assistant until you lock it down.",
     );
   }
+
+  if (twilioConfigured()) {
+    console.log(
+      "Twilio Messaging: POST /sms — SMS and/or WhatsApp (same webhook URL in Twilio Console).",
+    );
+  } else if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+    if (
+      !process.env.TWILIO_PHONE_NUMBER?.trim() &&
+      !process.env.TWILIO_WHATSAPP_FROM?.trim()
+    ) {
+      console.warn(
+        "Twilio: set TWILIO_PHONE_NUMBER (SMS) and/or TWILIO_WHATSAPP_FROM (e.g. whatsapp:+14155238886).",
+      );
+    }
+  } else if (
+    process.env.TWILIO_ACCOUNT_SID ||
+    process.env.TWILIO_AUTH_TOKEN ||
+    process.env.TWILIO_PHONE_NUMBER ||
+    process.env.TWILIO_WHATSAPP_FROM
+  ) {
+    console.warn(
+      "Twilio env is incomplete; need TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.",
+    );
+  }
+
+  if (!ownerSms && twilioConfigured()) {
+    console.warn(
+      "OWNER_SMS is not set; any sender who reaches your Twilio SMS/WhatsApp number can use the assistant.",
+    );
+  }
 }
 
 logStartupConfig();
@@ -269,4 +400,5 @@ logStartupConfig();
 server.listen(port, host, () => {
   console.log(`WhatsApp assistant listening on http://${host}:${port}`);
   console.log(`Webhook URL path: /webhook`);
+  console.log(`Twilio Messaging webhook path: /sms (SMS + WhatsApp)`);
 });

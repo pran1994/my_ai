@@ -1,4 +1,5 @@
 import { loadEnvFile } from "./load-env.js";
+import { resolve } from "node:path";
 
 const placeholders = new Set([
   "",
@@ -81,7 +82,7 @@ async function checkWhatsAppToken() {
       const err = JSON.parse(body)?.error;
       if (err?.code === 190) {
         hint =
-          " → Meta says this access token is expired or invalid. Generate a NEW token (WhatsApp → API setup, or Business settings → System users) and replace WHATSAPP_ACCESS_TOKEN in .env and on Render.";
+          " → Meta rejected WHATSAPP_ACCESS_TOKEN (Graph API user/page token). This is NOT WHATSAPP_VERIFY_TOKEN. Generate a new access token (WhatsApp → API setup, or Business settings → System users) and replace WHATSAPP_ACCESS_TOKEN in .env and on Render.";
       }
     } catch {
       /* ignore */
@@ -100,12 +101,16 @@ async function checkWhatsAppToken() {
 }
 
 async function main() {
-  const loaded = await loadEnvFile();
+  const loaded = await loadEnvFile(resolve(".env"), { override: true });
 
   if (!loaded) {
     console.error("No .env file found. Run: cp .env.example .env");
     process.exit(1);
   }
+
+  console.log(
+    "Env: project .env overrides any exported vars with the same name (see scripts/load-env.js).\n",
+  );
 
   const llmProvider = (process.env.LLM_PROVIDER || "openai").toLowerCase();
   const llmChecks =
@@ -147,6 +152,9 @@ async function main() {
   }
 
   console.log("\nWhatsApp Cloud API\n------------------");
+  console.log(
+    "(This call uses WHATSAPP_ACCESS_TOKEN only. Changing WHATSAPP_VERIFY_TOKEN does not affect the line below.)\n",
+  );
   const tokenCheck = await checkWhatsAppToken();
   console.log(
     `${tokenCheck.ok ? "OK" : "FAIL"}  access token + phone number id: ${tokenCheck.detail}`,
