@@ -173,6 +173,93 @@ async function handleIncomingWebhook(request, response) {
   }
 }
 
+async function handleTwilioSmsWebhook(request, response) {
+  if (!twilioConfigured()) {
+    sendJson(response, 404, { error: "Twilio is not configured" });
+    return;
+  }
+
+  const rawBody = await readRequestBody(request);
+  const bodyText = rawBody.toString("utf8");
+  const params = parseTwilioForm(bodyText);
+  const smsPath = "/sms";
+  const fullUrl = twilioWebhookUrl(request, smsPath);
+  const signature = request.headers["x-twilio-signature"];
+
+  if (!verifyTwilioWebhookRequest(fullUrl, params, signature)) {
+    console.warn(
+      JSON.stringify({
+        event: "twilio_webhook_verify_failed",
+        hint: "URL must match Messaging webhook in Twilio (set PUBLIC_BASE_URL if behind a proxy).",
+      }),
+    );
+    response.writeHead(403, { "Content-Type": "text/plain" });
+    response.end("Forbidden");
+    return;
+  }
+
+  const from = params.From?.trim();
+  const text = params.Body?.trim() || "";
+  const messageId = params.MessageSid || "";
+
+  if (!from || !text || !messageId) {
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end("");
+    return;
+  }
+
+  response.writeHead(200, { "Content-Type": "text/plain" });
+  response.end("");
+
+  const dedupId = `twilio:${messageId}`;
+
+  if (
+    inFlightMessageIds.has(dedupId) ||
+    (await hasProcessedMessage(dedupId))
+  ) {
+    return;
+  }
+
+  inFlightMessageIds.add(dedupId);
+
+  console.log(
+    JSON.stringify({
+      event: "incoming_twilio",
+      channel: from.toLowerCase().startsWith("whatsapp:") ? "whatsapp" : "sms",
+      from,
+      textLength: text.length,
+    }),
+  );
+
+  if (
+    ownerSms &&
+    canonicalTwilioAddress(from) !== canonicalTwilioAddress(ownerSms)
+  ) {
+    console.warn(`Ignoring Twilio message from non-owner sender: ${from}`);
+    inFlightMessageIds.delete(dedupId);
+    return;
+  }
+
+  try {
+    const reply = await handleAssistantMessage(text);
+    await sendTwilioSms(from, reply);
+    await markMessageProcessed(dedupId);
+  } catch (error) {
+    console.error(error);
+    try {
+      await sendTwilioSms(
+        from,
+        "I hit an internal error while responding.",
+      );
+      await markMessageProcessed(dedupId);
+    } catch (sendError) {
+      console.error(sendError);
+    }
+  } finally {
+    inFlightMessageIds.delete(dedupId);
+  }
+}
+
 function webhookPathname(url) {
   let path = url.pathname;
   if (path.length > 1 && path.endsWith("/")) {
@@ -198,6 +285,11 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && path === "/webhook") {
       await handleIncomingWebhook(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && path === "/sms") {
+      await handleTwilioSmsWebhook(request, response);
       return;
     }
 
